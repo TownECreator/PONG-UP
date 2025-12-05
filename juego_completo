@@ -1,0 +1,469 @@
+import pygame
+import sys
+import random
+
+pygame.init()
+
+ANCHO, ALTO, FPS = 800, 600, 60
+BLANCO, NEGRO, GRIS, CELESTE_PASTEL = (255, 255, 255), (0, 0, 0), (150, 150, 150), (173, 216, 230)
+PALETA_TAM, VELOCIDAD_PALETA, PELOTA_TAM, VELOCIDAD_PELOTA = 150, 7, 40, 5
+POWERUP_TAM, TIEMPO_SPAWN, PUNTOS_VICTORIA = 40, 8000, 5
+
+ventana = pygame.display.set_mode((ANCHO, ALTO))
+pygame.display.set_caption("Pong")
+reloj = pygame.time.Clock()
+
+POWERUPS = {
+    'mas_velocidad': {'imagen': 'masvelo.png', 'desc': 'Velocidad+', 'dur': 6000},
+    'paleta_grande': {'imagen': 'grande.png', 'desc': 'Paleta Larga', 'dur': 8000},
+    'paleta_pequeña': {'imagen': 'pequenio.png', 'desc': 'Paleta Corta', 'dur': 6000}, 
+    'cambio_controles': {'imagen': 'cambio.png', 'desc': 'Invertir', 'dur': 5000},
+    'menos_velocidad': {'imagen': 'lento.png', 'desc': 'Velocidad-', 'dur': 6000}
+}
+
+def cargar_fuente(tam):
+    for f in ['Minecrafter.Reg.ttf', 'Minecrafter.Reg', 'Minecraft.ttf']:
+        try: return pygame.font.Font(f, tam)
+        except: continue
+    return pygame.font.Font(None, tam)
+
+f_grande, f_mediana, f_pequeña, f_titulo = cargar_fuente(50), cargar_fuente(36), cargar_fuente(22), cargar_fuente(60)
+
+def cargar(nombre, w, h):
+    try: 
+        img = pygame.image.load(nombre).convert_alpha()
+        return pygame.transform.scale(img, (w, h))
+    except: 
+        s = pygame.Surface((w, h))
+        s.fill(BLANCO)
+        return s
+
+img_pelota = cargar('pelota.png', PELOTA_TAM, PELOTA_TAM)
+img_paleta_izq = cargar('izquierda.png', PALETA_TAM, PALETA_TAM)
+img_paleta_der = cargar('derecha.png', PALETA_TAM, PALETA_TAM)
+img_cel_izq = cargar('celizq.png', 250, 250)
+img_cel_der = cargar('celder.png', 250, 250)
+img_cel_final = cargar('gracias.png', 500, 500)
+
+try:
+    img_original = pygame.image.load('pongup.png').convert_alpha()
+    ancho_orig, alto_orig = img_original.get_size()
+    nuevo_ancho = 500
+    nuevo_alto = int((nuevo_ancho / ancho_orig) * alto_orig)
+    img_pongup = pygame.transform.scale(img_original, (nuevo_ancho, nuevo_alto))
+except:
+    img_pongup = pygame.Surface((500, 150))
+    img_pongup.fill(BLANCO)
+
+img_jucapa = cargar('jucapa.png', 600, 400)
+imgs_powerups = {t: cargar(d['imagen'], POWERUP_TAM, POWERUP_TAM) for t, d in POWERUPS.items()}
+
+class Marcador:
+    def __init__(self):
+        self.izq = self.der = 0
+        self.cel = None
+        self.t_cel = 0
+    
+    def punto_izq(self):
+        self.izq += 1
+        self.cel, self.t_cel = 'izq', pygame.time.get_ticks()
+    
+    def punto_der(self):
+        self.der += 1
+        self.cel, self.t_cel = 'der', pygame.time.get_ticks()
+    
+    def actualizar(self, t):
+        if self.cel and t - self.t_cel > 1500: self.cel = None
+    
+    def dibujar(self, s, t):
+        s.blit(f_grande.render(str(self.izq), True, BLANCO), (ANCHO // 4 - 20, 20))
+        s.blit(f_grande.render(str(self.der), True, BLANCO), (3 * ANCHO // 4 - 20, 20))
+        if self.cel == 'izq': s.blit(img_cel_izq, (ANCHO // 4 - 125, ALTO - 280))
+        elif self.cel == 'der': s.blit(img_cel_der, (3 * ANCHO // 4 - 125, ALTO - 280))
+    
+    def ganador(self):
+        if self.izq >= PUNTOS_VICTORIA: return 'izq'
+        if self.der >= PUNTOS_VICTORIA: return 'der'
+        return None
+    
+    def reiniciar(self):
+        self.izq = self.der = 0
+        self.cel = None
+
+class PowerUps:
+    def __init__(self):
+        self.lista = []
+        self.ultimo = pygame.time.get_ticks()
+        self.efectos = []
+    
+    def crear(self):
+        return {
+            'x': random.randint(ANCHO // 4, 3 * ANCHO // 4 - POWERUP_TAM),
+            'y': random.randint(80, ALTO - 80 - POWERUP_TAM),
+            'tipo': random.choice(list(POWERUPS.keys()))
+        }
+    
+    def actualizar(self, t):
+        if t - self.ultimo > TIEMPO_SPAWN:
+            self.lista.append(self.crear())
+            self.ultimo = t
+        self.efectos = [e for e in self.efectos if t < e['fin']]
+    
+    def colision(self, px, py, vx):
+        eliminados = []
+        for pw in self.lista:
+            if (px < pw['x'] + POWERUP_TAM and px + PELOTA_TAM > pw['x'] and
+                py < pw['y'] + POWERUP_TAM and py + PELOTA_TAM > pw['y']):
+                self.efectos.append({
+                    'tipo': pw['tipo'],
+                    'lado': 'izq' if vx > 0 else 'der',
+                    'fin': pygame.time.get_ticks() + POWERUPS[pw['tipo']]['dur']
+                })
+                eliminados.append(pw)
+        for pw in eliminados: self.lista.remove(pw)
+    
+    def obtener(self, tipo, lado=None):
+        return bool([e for e in self.efectos if e['tipo'] == tipo and (lado is None or e['lado'] == lado)])
+    
+    def dibujar(self, s, t):
+        for pw in self.lista: s.blit(imgs_powerups[pw['tipo']], (pw['x'], pw['y']))
+        y = 100
+        for ef in self.efectos:
+            txt = f_pequeña.render(
+                f"{POWERUPS[ef['tipo']]['desc']} ({'J1' if ef['lado'] == 'izq' else 'J2'}): {max(0, (ef['fin'] - t) // 1000)}s",
+                True, BLANCO
+            )
+            s.blit(txt, (10, y))
+            y += 25
+    
+    def reiniciar(self):
+        self.lista = []
+        self.efectos = []
+        self.ultimo = pygame.time.get_ticks()
+
+def pantalla_fade():
+    tiempo_inicio = pygame.time.get_ticks()
+    fase = 0
+    
+    while fase < 3:
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            
+        t = pygame.time.get_ticks() - tiempo_inicio
+        ventana.fill(CELESTE_PASTEL)
+        
+        if fase == 0:
+            alpha = min(255, (t / 2000) * 255)
+            if t >= 2000: fase, tiempo_inicio = 1, pygame.time.get_ticks()
+        elif fase == 1:
+            alpha = 255
+            if t >= 1500: fase, tiempo_inicio = 2, pygame.time.get_ticks()
+        else:
+            alpha = max(0, 255 - (t / 2000) * 255)
+            if alpha <= 0: break
+        
+        img = img_jucapa.copy()
+        img.set_alpha(int(alpha))
+        ventana.blit(img, (ANCHO // 2 - 300, ALTO // 2 - 200))
+        pygame.display.flip()
+        reloj.tick(FPS)
+
+def dibujar_fondo_animado(offset):
+    for y in range(ALTO):
+        color_intensidad = int(20 + (y / ALTO) * 30)
+        pygame.draw.line(ventana, (color_intensidad, color_intensidad, color_intensidad + 10), (0, y), (ANCHO, y))
+    
+    for i in range(15):
+        x = (i * 60 + offset) % ANCHO
+        y = (i * 40 + offset // 2) % ALTO
+        radio = 2 + (i % 3)
+        alpha_surface = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
+        pygame.draw.circle(alpha_surface, (100, 100, 150, 100), (radio, radio), radio)
+        ventana.blit(alpha_surface, (x, y))
+    
+    for i in range(0, ANCHO, 100):
+        pygame.draw.line(ventana, (40, 40, 50), (i, 0), (i, ALTO), 1)
+    for i in range(0, ALTO, 100):
+        pygame.draw.line(ventana, (40, 40, 50), (0, i), (ANCHO, i), 1)
+
+def menu_inicio():
+    opciones = ['JUGAR', 'REGLAS', 'CONTROLES']
+    seleccion = 0
+    offset = 0
+    rects_opciones = []
+    
+    while True:
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_sobre = -1
+        
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if evento.type == pygame.KEYDOWN:
+                if evento.key == pygame.K_UP: seleccion = (seleccion - 1) % len(opciones)
+                elif evento.key == pygame.K_DOWN: seleccion = (seleccion + 1) % len(opciones)
+                elif evento.key == pygame.K_RETURN:
+                    if seleccion == 0: return 'jugar'
+                    elif seleccion == 1: pantalla_reglas()
+                    else: pantalla_controles()
+            if evento.type == pygame.MOUSEBUTTONDOWN:
+                for i, rect in enumerate(rects_opciones):
+                    if rect.collidepoint(mouse_pos):
+                        if i == 0: return 'jugar'
+                        elif i == 1: pantalla_reglas()
+                        else: pantalla_controles()
+            
+        offset = (offset + 1) % 1000
+        dibujar_fondo_animado(offset)
+        
+        img_y = 30
+        ventana.blit(img_pongup, (ANCHO // 2 - img_pongup.get_width() // 2, img_y))
+   
+        inicio_opciones = img_y + img_pongup.get_height() + 30
+        rects_opciones = []
+        
+        for i, opcion in enumerate(opciones):
+            y_pos = inicio_opciones + i * 50
+         
+            txt = f_mediana.render(opcion, True, BLANCO)
+            rect = txt.get_rect(center=(ANCHO // 2, y_pos))
+            rects_opciones.append(rect)
+            
+            if rect.collidepoint(mouse_pos):
+                mouse_sobre = i
+                seleccion = i
+ 
+            color = BLANCO if i == seleccion else GRIS
+            txt_final = f_mediana.render(opcion, True, color)
+            ventana.blit(txt_final, (ANCHO // 2 - txt_final.get_width() // 2, y_pos))
+        
+        pygame.display.flip()
+        reloj.tick(FPS)
+
+def pantalla_reglas():
+    reglas = [
+        "Primer jugador en llegar a 5 puntos gana",
+        "Los power-ups aparecen cada 8 segundos",
+        "Velocidad plus.- La pelota va mas rapido",
+        "Velocidad minus.- La pelota va mas lento",
+        "Paleta Larga.- Tu paleta crece",
+        "Paleta Corta.- Paleta rival se achica",
+        "Invertir.- Controles del rival se invierten",
+        "",
+        "Presiona ESC para volver"
+    ]
+    offset = 0
+    
+    while True:
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if evento.type == pygame.KEYDOWN and evento.key == pygame.K_ESCAPE: return
+        
+        offset = (offset + 1) % 1000
+        dibujar_fondo_animado(offset)
+        
+        txt_titulo = f_titulo.render("REGLAS", True, BLANCO)
+        ventana.blit(txt_titulo, (ANCHO // 2 - txt_titulo.get_width() // 2, 50))
+        
+        y = 150
+        for regla in reglas:
+            txt = f_pequeña.render(regla, True, BLANCO)
+            ventana.blit(txt, (ANCHO // 2 - txt.get_width() // 2, y))
+            y += 35
+        
+        pygame.display.flip()
+        reloj.tick(FPS)
+
+def pantalla_controles():
+    controles = [
+        "JUGADOR 1:",
+        "W - Mover arriba",
+        "S - Mover abajo",
+        "",
+        "JUGADOR 2:",
+        "FLECHA ARRIBA - Mover arriba",
+        "FLECHA ABAJO - Mover abajo",
+        "",
+        "Presiona ESC para volver"
+    ]
+    offset = 0
+    
+    while True:
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if evento.type == pygame.KEYDOWN and evento.key == pygame.K_ESCAPE: return
+        
+        offset = (offset + 1) % 1000
+        dibujar_fondo_animado(offset)
+        
+        txt_titulo = f_titulo.render("CONTROLES", True, BLANCO)
+        ventana.blit(txt_titulo, (ANCHO // 2 - txt_titulo.get_width() // 2, 50))
+        
+        y = 150
+        for ctrl in controles:
+            txt = f_pequeña.render(ctrl, True, BLANCO)
+            ventana.blit(txt, (ANCHO // 2 - txt.get_width() // 2, y))
+            y += 35
+        
+        pygame.display.flip()
+        reloj.tick(FPS)
+
+def reiniciar():
+    return {
+        'pizq_y': (ALTO - PALETA_TAM) // 2, 'pder_y': (ALTO - PALETA_TAM) // 2,
+        'pizq_alto': PALETA_TAM, 'pder_alto': PALETA_TAM,
+        'pelota_x': ANCHO // 2, 'pelota_y': ALTO // 2,
+        'pelota_vx': VELOCIDAD_PELOTA * random.choice([-1, 1]),
+        'pelota_vy': VELOCIDAD_PELOTA * random.choice([-1, 1]),
+        'pausado': False
+    }
+
+def juego():
+    marcador, powerups, estado = Marcador(), PowerUps(), reiniciar()
+    ejecutando, terminado = True, False
+    
+    while ejecutando:
+        t = pygame.time.get_ticks()
+        
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT: return 'salir'
+            if evento.type == pygame.KEYDOWN and terminado:
+                if evento.key == pygame.K_SPACE:
+                    marcador.reiniciar()
+                    powerups.reiniciar()
+                    estado, terminado = reiniciar(), False
+                elif evento.key == pygame.K_ESCAPE: return 'menu'
+        
+        if not terminado:
+            marcador.actualizar(t)
+            estado['pausado'] = marcador.cel is not None
+            
+            if not estado['pausado']:
+                powerups.actualizar(t)
+                
+                ef_vel = powerups.obtener('mas_velocidad')
+                ef_lenta = powerups.obtener('menos_velocidad')
+                ef_grande_izq = powerups.obtener('paleta_grande', 'izq')
+                ef_grande_der = powerups.obtener('paleta_grande', 'der')
+                
+                ef_peq_izq_rival = powerups.obtener('paleta_pequeña', 'der') 
+                ef_peq_der_rival = powerups.obtener('paleta_pequeña', 'izq') 
+                
+                ef_inv_izq = powerups.obtener('cambio_controles', 'izq') 
+                ef_inv_der = powerups.obtener('cambio_controles', 'der') 
+                
+                estado['pizq_alto'] = PALETA_TAM * (1.8 if ef_grande_izq else (0.4 if ef_peq_izq_rival else 1))
+                estado['pder_alto'] = PALETA_TAM * (1.8 if ef_grande_der else (0.4 if ef_peq_der_rival else 1))
+                
+                teclas = pygame.key.get_pressed()
+                
+                mult_izq = -1 if ef_inv_izq else 1
+                mult_der = -1 if ef_inv_der else 1
+                
+                usa_wasd_j1 = not ef_inv_der
+               
+                if usa_wasd_j1:
+                
+                    if teclas[pygame.K_w]:
+                        estado['pizq_y'] = max(0, min(estado['pizq_y'] - VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
+                    if teclas[pygame.K_s]:
+                        estado['pizq_y'] = max(0, min(estado['pizq_y'] + VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
+                else:
+                    if teclas[pygame.K_UP]:
+                        estado['pizq_y'] = max(0, min(estado['pizq_y'] - VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
+                    if teclas[pygame.K_DOWN]:
+                        estado['pizq_y'] = max(0, min(estado['pizq_y'] + VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
+
+                usa_flechas_j2 = not ef_inv_izq
+                
+                if usa_flechas_j2:
+                    if teclas[pygame.K_UP]:
+                        estado['pder_y'] = max(0, min(estado['pder_y'] - VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
+                    if teclas[pygame.K_DOWN]:
+                        estado['pder_y'] = max(0, min(estado['pder_y'] + VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
+                else:
+                    if teclas[pygame.K_w]:
+                        estado['pder_y'] = max(0, min(estado['pder_y'] - VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
+                    if teclas[pygame.K_s]:
+                        estado['pder_y'] = max(0, min(estado['pder_y'] + VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
+                
+                if ef_vel:
+                    vel_mod = 1.7
+                elif ef_lenta:
+                    vel_mod = 0.5
+                else:
+                    vel_mod = 1.0
+                    
+                estado['pelota_x'] += estado['pelota_vx'] * vel_mod
+                estado['pelota_y'] += estado['pelota_vy'] * vel_mod
+                
+                if estado['pelota_y'] <= 0 or estado['pelota_y'] >= ALTO - PELOTA_TAM:
+                    estado['pelota_vy'] *= -1
+                
+                if (estado['pelota_x'] <= PALETA_TAM and
+                    estado['pizq_y'] <= estado['pelota_y'] + PELOTA_TAM // 2 <= estado['pizq_y'] + estado['pizq_alto']
+                    and estado['pelota_vx'] < 0):
+                    estado['pelota_vx'] = abs(estado['pelota_vx'])
+                    estado['pelota_x'] = PALETA_TAM
+                
+                if (estado['pelota_x'] >= ANCHO - PALETA_TAM - PELOTA_TAM and
+                    estado['pder_y'] <= estado['pelota_y'] + PELOTA_TAM // 2 <= estado['pder_y'] + estado['pder_alto']
+                    and estado['pelota_vx'] > 0):
+                    estado['pelota_vx'] = -abs(estado['pelota_vx'])
+                    estado['pelota_x'] = ANCHO - PALETA_TAM - PELOTA_TAM
+                
+                powerups.colision(estado['pelota_x'], estado['pelota_y'], estado['pelota_vx'])
+                
+                if estado['pelota_x'] < 0:
+                    marcador.punto_der()
+                    estado = reiniciar()
+                    powerups.reiniciar()
+                elif estado['pelota_x'] > ANCHO:
+                    marcador.punto_izq()
+                    estado = reiniciar()
+                    powerups.reiniciar()
+                
+                if marcador.ganador(): terminado = True
+        
+        ventana.fill(NEGRO)
+        for y in range(0, ALTO, 20): pygame.draw.rect(ventana, GRIS, (ANCHO // 2 - 2, y, 4, 10))
+        
+        ventana.blit(pygame.transform.scale(img_paleta_izq, (PALETA_TAM, int(estado['pizq_alto']))), (0, estado['pizq_y']))
+        ventana.blit(pygame.transform.scale(img_paleta_der, (PALETA_TAM, int(estado['pder_alto']))), (ANCHO - PALETA_TAM, estado['pder_y']))
+        ventana.blit(img_pelota, (estado['pelota_x'], estado['pelota_y']))
+        
+        powerups.dibujar(ventana, t)
+        marcador.dibujar(ventana, t)
+        
+        if terminado:
+            overlay = pygame.Surface((ANCHO, ALTO))
+            overlay.set_alpha(200)
+            overlay.fill(NEGRO)
+            ventana.blit(overlay, (0, 0))
+            ventana.blit(img_cel_final, (ANCHO // 2 - 250, ALTO // 2 - 250))
+            txt1 = f_mediana.render("ESPACIO para jugar", True, BLANCO)
+            txt2 = f_pequeña.render("ESC para menu", True, GRIS)
+            ventana.blit(txt1, (ANCHO // 2 - txt1.get_width() // 2, ALTO - 80))
+            ventana.blit(txt2, (ANCHO // 2 - txt2.get_width() // 2, ALTO - 40))
+        
+        pygame.display.flip()
+        reloj.tick(FPS)
+    
+    return 'salir'
+
+def main():
+    pantalla_fade()
+    while True:
+        if menu_inicio() == 'jugar' and juego() == 'salir': break
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
