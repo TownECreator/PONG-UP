@@ -189,7 +189,7 @@ def dibujar_fondo_animado(offset):
         pygame.draw.line(ventana, (40, 40, 50), (0, i), (ANCHO, i), 1)
 
 def menu_inicio():
-    opciones = ['JUGAR', 'REGLAS', 'CONTROLES']
+    opciones = ['JUGADOR VS JUGADOR', 'JUGADOR VS CPU', 'REGLAS', 'CONTROLES']
     seleccion = 0
     offset = 0
     rects_opciones = []
@@ -206,14 +206,16 @@ def menu_inicio():
                 if evento.key == pygame.K_UP: seleccion = (seleccion - 1) % len(opciones)
                 elif evento.key == pygame.K_DOWN: seleccion = (seleccion + 1) % len(opciones)
                 elif evento.key == pygame.K_RETURN:
-                    if seleccion == 0: return 'jugar'
-                    elif seleccion == 1: pantalla_reglas()
+                    if seleccion == 0: return 'pvp'
+                    elif seleccion == 1: return 'pvcpu'
+                    elif seleccion == 2: pantalla_reglas()
                     else: pantalla_controles()
             if evento.type == pygame.MOUSEBUTTONDOWN:
                 for i, rect in enumerate(rects_opciones):
                     if rect.collidepoint(mouse_pos):
-                        if i == 0: return 'jugar'
-                        elif i == 1: pantalla_reglas()
+                        if i == 0: return 'pvp'
+                        elif i == 1: return 'pvcpu'
+                        elif i == 2: pantalla_reglas()
                         else: pantalla_controles()
             
         offset = (offset + 1) % 1000
@@ -247,11 +249,11 @@ def pantalla_reglas():
     reglas = [
         "Primer jugador en llegar a 5 puntos gana",
         "Los power-ups aparecen cada 8 segundos",
-        "Velocidad plus.- La pelota va mas rapido",
-        "Velocidad minus.- La pelota va mas lento",
-        "Paleta Larga.- Tu paleta crece",
-        "Paleta Corta.- Paleta rival se achica",
-        "Invertir.- Controles del rival se invierten",
+        "Velocidad+: La pelota va mas rapido",
+        "Velocidad-: La pelota va mas lento",
+        "Paleta Larga: Tu paleta crece",
+        "Paleta Corta: Paleta rival se achica",
+        "Invertir: Controles del rival se invierten",
         "",
         "Presiona ESC para volver"
     ]
@@ -285,7 +287,7 @@ def pantalla_controles():
         "W - Mover arriba",
         "S - Mover abajo",
         "",
-        "JUGADOR 2:",
+        "JUGADOR 2 (o CPU):",
         "FLECHA ARRIBA - Mover arriba",
         "FLECHA ABAJO - Mover abajo",
         "",
@@ -325,9 +327,29 @@ def reiniciar():
         'pausado': False
     }
 
-def juego():
+def logica_cpu(estado, velocidad_base_paleta, cpu_velocidad_factor=0.8):
+    # La CPU solo se mueve si la pelota se acerca a su lado y el juego no está pausado
+    if estado['pelota_vx'] > 0 and estado['pelota_x'] > ANCHO // 3 and not estado['pausado']:
+        
+        centro_paleta = estado['pder_y'] + estado['pder_alto'] // 2
+        centro_pelota = estado['pelota_y'] + PELOTA_TAM // 2
+        
+        # Factor de velocidad ajustado (más lento que el jugador para dar oportunidad)
+        vel_cpu = velocidad_base_paleta * cpu_velocidad_factor
+        
+        if centro_paleta < centro_pelota - 10:  # La pelota está abajo, mover hacia abajo
+            estado['pder_y'] += vel_cpu
+        elif centro_paleta > centro_pelota + 10:  # La pelota está arriba, mover hacia arriba
+            estado['pder_y'] -= vel_cpu
+            
+        # Limitar movimiento al borde de la pantalla
+        estado['pder_y'] = max(0, min(estado['pder_y'], ALTO - estado['pder_alto']))
+
+def juego(modo_juego='pvp'):
     marcador, powerups, estado = Marcador(), PowerUps(), reiniciar()
     ejecutando, terminado = True, False
+    
+    es_cpu = (modo_juego == 'pvcpu')
     
     while ejecutando:
         t = pygame.time.get_ticks()
@@ -367,32 +389,22 @@ def juego():
                 mult_izq = -1 if ef_inv_izq else 1
                 mult_der = -1 if ef_inv_der else 1
                 
-                usa_wasd_j1 = not ef_inv_der
-               
-                if usa_wasd_j1:
-                
-                    if teclas[pygame.K_w]:
-                        estado['pizq_y'] = max(0, min(estado['pizq_y'] - VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
-                    if teclas[pygame.K_s]:
-                        estado['pizq_y'] = max(0, min(estado['pizq_y'] + VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
-                else:
-                    if teclas[pygame.K_UP]:
-                        estado['pizq_y'] = max(0, min(estado['pizq_y'] - VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
-                    if teclas[pygame.K_DOWN]:
-                        estado['pizq_y'] = max(0, min(estado['pizq_y'] + VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
+                # Movimiento Jugador 1 (Izquierda)
+                if teclas[pygame.K_w]:
+                    estado['pizq_y'] = max(0, min(estado['pizq_y'] - VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
+                if teclas[pygame.K_s]:
+                    estado['pizq_y'] = max(0, min(estado['pizq_y'] + VELOCIDAD_PALETA * mult_der, ALTO - estado['pizq_alto']))
 
-                usa_flechas_j2 = not ef_inv_izq
-                
-                if usa_flechas_j2:
+                # Movimiento Jugador 2 (Derecha) o CPU
+                if not es_cpu:
                     if teclas[pygame.K_UP]:
                         estado['pder_y'] = max(0, min(estado['pder_y'] - VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
                     if teclas[pygame.K_DOWN]:
                         estado['pder_y'] = max(0, min(estado['pder_y'] + VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
                 else:
-                    if teclas[pygame.K_w]:
-                        estado['pder_y'] = max(0, min(estado['pder_y'] - VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
-                    if teclas[pygame.K_s]:
-                        estado['pder_y'] = max(0, min(estado['pder_y'] + VELOCIDAD_PALETA * mult_izq, ALTO - estado['pder_alto']))
+                    # Lógica de la CPU para el jugador de la derecha
+                    # No aplicamos 'cambio_controles' a la CPU para no complicar su IA, solo al J1.
+                    logica_cpu(estado, VELOCIDAD_PALETA)
                 
                 if ef_vel:
                     vel_mod = 1.7
@@ -461,7 +473,13 @@ def juego():
 def main():
     pantalla_fade()
     while True:
-        if menu_inicio() == 'jugar' and juego() == 'salir': break
+        resultado_menu = menu_inicio()
+        if resultado_menu == 'pvp':
+            if juego('pvp') == 'salir': break
+        elif resultado_menu == 'pvcpu':
+            if juego('pvcpu') == 'salir': break
+        else: # Debe ser 'salir' o error
+            break
     pygame.quit()
     sys.exit()
 
