@@ -18,3 +18,5 @@ Jugador 2: Arriba / Abajo
 - Paletas con mejoras temporales
 - Sistema de puntuación
 - Imágenes personalizadas
+
+Para jugar, por favor descargue el archivo ZIP de este repositorio.
